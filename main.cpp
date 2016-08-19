@@ -6,12 +6,48 @@
 #include <set>
 #include <unordered_set>
 #include <limits>
+#include <cstring>
 
 #include "deleter.hpp"
 #include "utils.hpp"
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+
+#include <glm/glm.hpp>
+
+struct Vertex {
+    glm::vec2 pos;
+    glm::vec3 color;
+    static vk::VertexInputBindingDescription getBindingDescription(){
+        return vk::VertexInputBindingDescription()
+            .setBinding(0)
+            .setStride(sizeof(Vertex))
+            .setInputRate(vk::VertexInputRate::eVertex);
+    }
+    static std::array<vk::VertexInputAttributeDescription, 2> getAttributeDescriptions() {
+        std::array<vk::VertexInputAttributeDescription, 2> attributeDescriptions = {};
+        attributeDescriptions[0].binding = 0;
+        attributeDescriptions[0].location = 0;
+        attributeDescriptions[0].format = vk::Format::eR32G32Sfloat;
+        attributeDescriptions[0].offset = offsetof(Vertex, pos);
+        attributeDescriptions[1].binding = 0;
+        attributeDescriptions[1].location = 1;
+        attributeDescriptions[1].format = vk::Format::eR32G32B32Sfloat;
+        attributeDescriptions[1].offset = offsetof(Vertex, color);
+        return attributeDescriptions;
+    }
+};
+
+const std::vector<Vertex> vertices = {
+    {{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+    {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+    {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+    {{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+    {{1.0f, -0.5f}, {0.0f, 0.0f, 1.0f}},
+    {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+};
+
 
 const int WIDTH = 800;
 const int HEIGHT = 600;
@@ -63,12 +99,17 @@ private:
     VDeleterPure<vk::Semaphore> imageAvailableSemaphore{device, &vk::Device::destroySemaphore};
     VDeleterPure<vk::Semaphore> renderFinishedSemaphore{device, &vk::Device::destroySemaphore};
     std::vector<VDeleterPure<vk::Fence>> fences;
+    VDeleterPure<vk::Buffer> vertexBuffer{device, &vk::Device::destroyBuffer};
+    VDeleterPure<vk::DeviceMemory> vertexBufferMemory{device, &vk::Device::freeMemory};
 
     void initWindow(){
         glfwInit();
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-        glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+        glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
         window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
+        glfwSetWindowUserPointer(window, this);
+        glfwSetWindowSizeCallback(window, HelloTriangleApplication::onWindowResized);
+
     }
     void initVulkan(){
         createInstance();
@@ -82,9 +123,21 @@ private:
         createGraphicsPipeline();
         createFramebuffers();
         createCommandPool();
+        createVertexBuffer();
         createCommandBuffers();
         createSemaphores();
     }
+    void recreateSwapChain() {
+        device->waitIdle();
+
+        createSwapChain();
+        createImageViews();
+        createRenderPass();
+        createGraphicsPipeline();
+        createFramebuffers();
+        createCommandBuffers();
+    }
+
     void createInstance(){
         // Test whether requested validation layers are available
         if (enableValidationLayers && !checkValidationLayerSupport()) {
@@ -409,10 +462,15 @@ private:
 
         createInfo.presentMode = presentMode;
         createInfo.clipped = VK_TRUE;
-        createInfo.oldSwapchain = vk::SwapchainKHR(); // Empty handle
+
+        vk::SwapchainKHR oldSwapChain = swapChain;
+        createInfo.oldSwapchain = oldSwapChain;
 
         // Create the swap chain!
+        //vk::SwapchainKHR newSwapChain = device->createSwapchainKHR(createInfo);
+        //swapChain = newSwapChain;
         swapChain = device->createSwapchainKHR(createInfo);
+
         // Rertieve images from the chain
         swapChainImages = device->getSwapchainImagesKHR(swapChain);
         // Store swapchain image format
@@ -499,11 +557,13 @@ private:
 
         vk::PipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
 
+        auto bindingDescription = Vertex::getBindingDescription();
+        auto attributeDescriptions = Vertex::getAttributeDescriptions();
         vk::PipelineVertexInputStateCreateInfo vertexInputInfo = vk::PipelineVertexInputStateCreateInfo()
-            .setVertexBindingDescriptionCount(0)
-            .setPVertexBindingDescriptions(nullptr)
-            .setVertexAttributeDescriptionCount(0)
-            .setPVertexAttributeDescriptions(nullptr);
+            .setVertexBindingDescriptionCount(1)
+            .setPVertexBindingDescriptions(&bindingDescription)
+            .setVertexAttributeDescriptionCount(2)
+            .setPVertexAttributeDescriptions(attributeDescriptions.data());
         vk::PipelineInputAssemblyStateCreateInfo inputAssembly = vk::PipelineInputAssemblyStateCreateInfo()
             .setTopology(vk::PrimitiveTopology::eTriangleList)
             .setPrimitiveRestartEnable(false);
@@ -604,7 +664,49 @@ private:
         commandPool = device->createCommandPool(poolInfo);
     }
 
+    void createVertexBuffer(){
+        vk::BufferCreateInfo bufferInfo = vk::BufferCreateInfo()
+            .setSize(sizeof(vertices[0]) * vertices.size())
+            .setUsage(vk::BufferUsageFlagBits::eVertexBuffer)
+            .setSharingMode(vk::SharingMode::eExclusive);
+        vertexBuffer = device->createBuffer(bufferInfo);
+        vk::MemoryRequirements memRequirements = device->getBufferMemoryRequirements(vertexBuffer);
+
+        std::cout << "VB req | size: " << memRequirements.size << ", allignment " << memRequirements.alignment << std::endl;
+
+        uint32_t memTypeIndex = findMemoryType(memRequirements.memoryTypeBits,
+                                               vk::MemoryPropertyFlagBits::eHostVisible |
+                                               vk::MemoryPropertyFlagBits::eHostCoherent);
+        vk::MemoryAllocateInfo allocInfo = vk::MemoryAllocateInfo()
+            .setAllocationSize(memRequirements.size)
+            .setMemoryTypeIndex(memTypeIndex);
+
+        vertexBufferMemory = device->allocateMemory(allocInfo);
+
+        device->bindBufferMemory(vertexBuffer, vertexBufferMemory, 0);
+
+        void* memoryMap;
+        memoryMap = device->mapMemory(vertexBufferMemory, 0, allocInfo.allocationSize, vk::MemoryMapFlags());
+        memcpy(memoryMap, vertices.data(), (uint32_t)bufferInfo.size);
+        device->unmapMemory(vertexBufferMemory);
+    }
+
+    uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) {
+        vk::PhysicalDeviceMemoryProperties memProperties = physicalDevice.getMemoryProperties();
+        for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+            if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+                return i;
+            }
+        }
+
+        throw std::runtime_error("failed to find suitable memory type!");
+    }
+
     void createCommandBuffers(){
+        if (commandBuffers.size() > 0) {
+            device->freeCommandBuffers(commandPool, commandBuffers.size(), commandBuffers.data());
+        }
+
         vk::CommandBufferAllocateInfo allocInfo = vk::CommandBufferAllocateInfo()
             .setCommandPool(commandPool)
             .setLevel(vk::CommandBufferLevel::ePrimary)
@@ -631,7 +733,8 @@ private:
             // Recording draw commands
             commandBuffers[i].beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
             commandBuffers[i].bindPipeline(vk::PipelineBindPoint::eGraphics, graphicsPipeline);
-            commandBuffers[i].draw(3, 1, 0, 0);
+            commandBuffers[i].bindVertexBuffers(0, {vertexBuffer}, {0});
+            commandBuffers[i].draw(vertices.size(), 1, 0, 0);
             commandBuffers[i].endRenderPass();
 
             commandBuffers[i].end();
@@ -646,10 +749,14 @@ private:
         fences.resize(commandBuffers.size(), VDeleterPure<vk::Fence>(device, &vk::Device::destroyFence));
         for(unsigned int i = 0; i < fences.size(); i++){
             fences[i] = device->createFence(fenceInfo);
-            std::cout << "Created fence " << i << std::endl;
-            if(!(fences[i]())) std::cout << "FAIL" << std::endl;
-            else std::cout << fences[i]().m_fence << std::endl;
         }
+    }
+
+    static void onWindowResized(GLFWwindow* window, int width, int height) {
+        if (width == 0 || height == 0) return;
+
+        HelloTriangleApplication* app = reinterpret_cast<HelloTriangleApplication*>(glfwGetWindowUserPointer(window));
+        app->recreateSwapChain();
     }
 
     void mainLoop(){
@@ -663,11 +770,14 @@ private:
     }
 
     void drawFrame(){
-        uint32_t imageIndex;
-        imageIndex = device->acquireNextImageKHR(swapChain,
+        vk::ResultValue<unsigned int> res = device->acquireNextImageKHR(swapChain,
                                                  std::numeric_limits<uint64_t>::max(),
                                                  imageAvailableSemaphore,
-                                                 VK_NULL_HANDLE).value; // No fence
+                                                 VK_NULL_HANDLE); // No fence
+        uint32_t imageIndex = res.value;
+        if (res.result == vk::Result::eErrorOutOfDateKHR || res.result == vk::Result::eSuboptimalKHR) {
+            recreateSwapChain();
+        }
 
         //std::cout << "Waiting for fence " << imageIndex << " " << fences[imageIndex]().m_fence << std::endl;
         device->waitForFences({fences[imageIndex]}, true, UINT64_MAX);

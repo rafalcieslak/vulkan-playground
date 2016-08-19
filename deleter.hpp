@@ -19,7 +19,9 @@ public:
     }
 
     void operator=(T&& other){
-        object = std::move(other);
+        //std::swap(object,other);
+        cleanup();
+        object = other;
     }
 
     inline operator T() const {
@@ -100,7 +102,9 @@ public:
     }
 
     void operator=(T&& other){
-        object = std::move(other);
+        //object = std::move(other);
+        cleanup();
+        object = other;
     }
 
     inline operator T() const {
