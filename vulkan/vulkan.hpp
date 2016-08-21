@@ -146,6 +146,26 @@ namespace vk
       return m_mask != rhs.m_mask;
     }
 
+    bool operator<(Flags<BitType> const& rhs) const
+    {
+      return m_mask < rhs.m_mask;
+    }
+
+    bool operator>(Flags<BitType> const& rhs) const
+    {
+      return m_mask > rhs.m_mask;
+    }
+
+    bool operator>=(Flags<BitType> const& rhs) const
+    {
+      return m_mask >= rhs.m_mask;
+    }
+
+    bool operator<=(Flags<BitType> const& rhs) const
+    {
+      return m_mask <= rhs.m_mask;
+    }
+
     explicit operator bool() const
     {
       return !!m_mask;

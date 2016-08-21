@@ -91,6 +91,15 @@ public:
         };
     }
 
+    //VDeleterPure(const VDeleterPure&) = default;
+    //VDeleterPure& operator=(const VDeleterPure&) = default;
+
+
+    /*VDeleterPure& operator=(VDeleterPure&& other){
+        std::swap(object, other.object);
+        std::swap(deleter, other.deleter);
+        return *this;
+        }*/
 
     ~VDeleterPure() {
         cleanup();
