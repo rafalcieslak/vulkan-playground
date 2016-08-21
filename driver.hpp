@@ -31,6 +31,7 @@ private:
     std::vector<VDeleterPure<vk::ImageView>> swapChainImageViews;
     VDeleterPure<vk::RenderPass> renderPass{device, &vk::Device::destroyRenderPass};
     VDeleterPure<vk::DescriptorSetLayout> descriptorSetLayout{device, &vk::Device::destroyDescriptorSetLayout};
+    VDeleterPure<vk::DescriptorSetLayout> descriptorSetLayout2{device, &vk::Device::destroyDescriptorSetLayout};
     VDeleterPure<vk::PipelineLayout> pipelineLayout{device, &vk::Device::destroyPipelineLayout};
     VDeleterPure<vk::Pipeline> graphicsPipeline{device, &vk::Device::destroyPipeline};
     std::vector<VDeleterPure<vk::Framebuffer>> swapChainFramebuffers;
@@ -49,6 +50,8 @@ private:
     VDeleterPure<vk::DeviceMemory> uniformBufferMemory{device, &vk::Device::freeMemory};
     VDeleterPure<vk::DescriptorPool> descriptorPool{device, &vk::Device::destroyDescriptorPool};
     vk::DescriptorSet descriptorSet;
+    size_t ubo2_offset;
+    size_t uniformBufferTotalSize;
 
     void createInstance();
     void setupDebugCallback();

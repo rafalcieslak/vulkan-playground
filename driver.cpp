@@ -53,11 +53,16 @@ const std::vector<uint16_t> indices = {
 const vk::SampleCountFlagBits multisample_level = vk::SampleCountFlagBits::e8;
 
 float rot_speed = 1.5f;
+float float_speed = 0.6f;
 
 struct UniformBufferObject {
     glm::mat4 model;
     glm::mat4 view;
     glm::mat4 proj;
+};
+
+struct UBO2{
+    float x[600];
 };
 
 const std::vector<const char*> validationLayers = {
@@ -360,6 +365,8 @@ vk::SurfaceFormatKHR Driver::chooseSwapSurfaceFormat(const std::vector<vk::Surfa
 }
 
 vk::PresentModeKHR Driver::chooseSwapPresentMode(const std::vector<vk::PresentModeKHR> availablePresentModes) {
+    return vk::PresentModeKHR::eImmediate; // Other present modes cause tearing and X lag.
+
     for (const auto& availablePresentMode : availablePresentModes) {
         if (availablePresentMode == vk::PresentModeKHR::eMailbox) {
             return availablePresentMode;
@@ -399,6 +406,7 @@ void Driver::createSwapChain() {
     if (swapChainSupport.capabilities.maxImageCount > 0 && imageCount > swapChainSupport.capabilities.maxImageCount) {
         imageCount = swapChainSupport.capabilities.maxImageCount;
     }
+    std::cout << "Desired image count: " << imageCount << std::endl;
     vk::SwapchainCreateInfoKHR createInfo = vk::SwapchainCreateInfoKHR()
         .setSurface(surface)
         .setMinImageCount(imageCount)
@@ -568,16 +576,33 @@ void Driver::createRenderPass(){
 }
 
 void Driver::createDescriptorSetLayout(){
-    vk::DescriptorSetLayoutBinding uboLayoutBinding = vk::DescriptorSetLayoutBinding()
+    std::array<vk::DescriptorSetLayoutBinding, 2> uboLayoutBinding;
+    uboLayoutBinding[0]
         .setBinding(0)
         .setDescriptorType(vk::DescriptorType::eUniformBuffer)
         .setDescriptorCount(1)
         .setStageFlags(vk::ShaderStageFlagBits::eVertex);
+    uboLayoutBinding[1]
+        .setBinding(1)
+        .setDescriptorType(vk::DescriptorType::eUniformBuffer)
+        .setDescriptorCount(1)
+        .setStageFlags(vk::ShaderStageFlagBits::eVertex);
     vk::DescriptorSetLayoutCreateInfo layoutInfo = vk::DescriptorSetLayoutCreateInfo()
-        .setBindingCount(1)
-        .setPBindings(&uboLayoutBinding);
+        .setBindingCount(2)
+        .setPBindings(uboLayoutBinding.data());
     descriptorSetLayout = device->createDescriptorSetLayout(layoutInfo);
 
+
+    std::array<vk::DescriptorSetLayoutBinding, 1> uboLayoutBinding2;
+    uboLayoutBinding2[0]
+        .setBinding(1)
+        .setDescriptorType(vk::DescriptorType::eUniformBuffer)
+        .setDescriptorCount(1)
+        .setStageFlags(vk::ShaderStageFlagBits::eVertex);
+    vk::DescriptorSetLayoutCreateInfo layoutInfo2 = vk::DescriptorSetLayoutCreateInfo()
+        .setBindingCount(1)
+        .setPBindings(uboLayoutBinding2.data());
+    descriptorSetLayout2 = device->createDescriptorSetLayout(layoutInfo2);
 }
 
 void Driver::createGraphicsPipeline(){
@@ -649,7 +674,7 @@ void Driver::createGraphicsPipeline(){
         .setLogicOp(vk::LogicOp::eCopy)
         .setAttachmentCount(1)
         .setPAttachments(&colorBlendAttachment);
-    vk::DescriptorSetLayout setLayouts[] = {descriptorSetLayout};
+    vk::DescriptorSetLayout setLayouts[] = {descriptorSetLayout,descriptorSetLayout2};
     vk::PipelineLayoutCreateInfo pipelineLayoutInfo = vk::PipelineLayoutCreateInfo()
         .setSetLayoutCount(1)
         .setPSetLayouts(setLayouts)
@@ -806,14 +831,24 @@ void Driver::createIndexBuffer(){
 }
 
 void Driver::createUniformBuffer(){
-    vk::DeviceSize bufferSize = sizeof(UniformBufferObject);
 
-    createBuffer(bufferSize,
+    const size_t allign = 0x100;
+    std::cout << "sizeof ubo1 = " << sizeof(UniformBufferObject) << std::endl;
+    std::cout << "allign = " << allign << std::endl;
+    // TODO: Missing 1 allignment if already perfectly alligned
+    uint32_t l = sizeof(UniformBufferObject)/allign;
+    ubo2_offset = (l+1)*allign;
+    std::cout << "offset = " << ubo2_offset << std::endl;
+
+    uniformBufferTotalSize = ubo2_offset + sizeof(UBO2);
+    vk::DeviceSize bsize = uniformBufferTotalSize;
+
+    createBuffer(bsize,
                  vk::BufferUsageFlagBits::eTransferSrc,
                  vk::MemoryPropertyFlagBits::eHostVisible |
                  vk::MemoryPropertyFlagBits::eHostCoherent,
                  uniformStagingBuffer, uniformStagingBufferMemory);
-    createBuffer(bufferSize,
+    createBuffer(bsize,
                  vk::BufferUsageFlagBits::eTransferDst |
                  vk::BufferUsageFlagBits::eUniformBuffer,
                  vk::MemoryPropertyFlagBits::eDeviceLocal,
@@ -822,7 +857,7 @@ void Driver::createUniformBuffer(){
 
 void Driver::createDescriptorPool(){
     vk::DescriptorPoolSize poolSize = vk::DescriptorPoolSize()
-        .setDescriptorCount(1)
+        .setDescriptorCount(2)
         .setType(vk::DescriptorType::eUniformBuffer);
     vk::DescriptorPoolCreateInfo createInfo = vk::DescriptorPoolCreateInfo()
         .setPoolSizeCount(1)
@@ -839,17 +874,21 @@ void Driver::createDescriptorSet(){
         .setPSetLayouts(layouts);
     descriptorSet = device->allocateDescriptorSets(allocInfo)[0];
 
-    vk::DescriptorBufferInfo bufferInfo = vk::DescriptorBufferInfo()
-        .setBuffer(uniformBuffer)
-        .setOffset(0)
-        .setRange(sizeof(UniformBufferObject));
+    std::array<vk::DescriptorBufferInfo, 2> bufferInfo;
+    bufferInfo[0].setBuffer(uniformBuffer);
+    bufferInfo[0].setOffset(0);
+    bufferInfo[0].setRange(sizeof(UniformBufferObject));
+    bufferInfo[1].setBuffer(uniformBuffer);
+    std::cout << "offset = " << ubo2_offset << std::endl;
+    bufferInfo[1].setOffset(ubo2_offset);
+    bufferInfo[1].setRange(sizeof(UBO2));
     vk::WriteDescriptorSet descWrite = vk::WriteDescriptorSet()
         .setDstSet(descriptorSet)
         .setDstBinding(0)
         .setDstArrayElement(0)
         .setDescriptorType(vk::DescriptorType::eUniformBuffer)
-        .setDescriptorCount(1)
-        .setPBufferInfo(&bufferInfo);
+        .setDescriptorCount(2)
+        .setPBufferInfo(bufferInfo.data());
     device->updateDescriptorSets({descWrite},{});
 }
 
@@ -930,13 +969,16 @@ void Driver::updateUniformBuffer(){
     ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
     ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float) swapChainExtent.height, 0.1f, 10.0f);
     ubo.proj[1][1] *= -1;
+    UBO2 ubo2 = {};
+    ubo2.x[0] = 1.0f * glm::sin(time * float_speed);
 
-    void* mappedMemory;
-    mappedMemory = device->mapMemory(uniformStagingBufferMemory, 0, sizeof(ubo), vk::MemoryMapFlags());
+    char* mappedMemory;
+    mappedMemory = (char*)device->mapMemory(uniformStagingBufferMemory, 0, uniformBufferTotalSize, vk::MemoryMapFlags());
     memcpy(mappedMemory, &ubo, sizeof(ubo));
+    memcpy(mappedMemory + ubo2_offset, &ubo2, sizeof(ubo2));
     device->unmapMemory(uniformStagingBufferMemory);
 
-    copyBuffer(uniformStagingBuffer, uniformBuffer, sizeof(ubo));
+    copyBuffer(uniformStagingBuffer, uniformBuffer, uniformBufferTotalSize);
 }
 
 void Driver::drawFrame(){
